@@ -54,11 +54,6 @@
             white-space: nowrap;
             z-index: 10;
         }
-        
-        .controls span {
-            margin: 0 8px;
-            opacity: 0.7;
-        }
     </style>
 </head>
 <body>
@@ -67,7 +62,7 @@
     </div>
     
     <div class="controls">
-        ↑↓ Speed &nbsp;&nbsp; Esc = Pause &nbsp;&nbsp; P = Boost &nbsp;&nbsp; R = Reset &nbsp;&nbsp; Rainbow speed: 0.01 (offset)
+        ↑↓ Speed &nbsp;&nbsp; Esc = Pause &nbsp;&nbsp; P = Boost &nbsp;&nbsp; R = Reset &nbsp;&nbsp; Rainbow @ 0.01 (offset)
     </div>
 
     <script>
@@ -75,20 +70,19 @@
         const ctx = canvas.getContext('2d', { alpha: true });
 
         // === Configuration ===
-        const SCALE = 2000;
-        const CENTER_X = 3840 / 2;
-        const CENTER_Y = 2160 / 2;
         const DISTANCE = 5;
+        const MARGIN = 0.08;           // 8% padding so it never touches the edge
         
         let angle = 0;
         let speed = 0.01;
         let colorAngle = 0;
-        const colorSpeed = 0.01;           // Fixed as requested
+        const colorSpeed = 0.01;
         let globalOpacity = 100;
         let opacityIncr = 1;
-        const LINE_WIDTH = 5;
+        const LINE_WIDTH = 25;          // Slightly thicker lines
+        const DOT_RADIUS = 15;          // Doubled from previous size (4 → 8)
 
-        // 16 points of the tesseract (4D) - same as your original code
+        // 16 points of the tesseract (4D)
         const points = [
             [[-1], [-1], [1], [1]],
             [[1], [-1], [1], [1]],
@@ -110,16 +104,13 @@
 
         let projectedPoints = new Array(16);
 
-        // Matrix multiplication (ported from your Python version)
         function matrixMultiply(a, b) {
             const rowsA = a.length;
             const colsA = a[0].length;
             const colsB = b[0].length;
-            
             if (colsA !== b.length) return null;
-            
+
             const result = Array.from({ length: rowsA }, () => Array(colsB).fill(0));
-            
             for (let i = 0; i < rowsA; i++) {
                 for (let j = 0; j < colsB; j++) {
                     let sum = 0;
@@ -132,7 +123,6 @@
             return result;
         }
 
-        // Offset rainbow generator (lines use offset 0, dots use offset 1.2)
         function getRainbow(offset = 0) {
             const r = Math.floor((Math.sin(colorAngle + offset) * 127.5) + 127.5);
             const g = Math.floor((Math.sin(colorAngle + offset + 2.0944) * 127.5) + 127.5);
@@ -141,14 +131,13 @@
         }
 
         function drawTesseract() {
-            // Pure black background
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             angle += speed;
             colorAngle += colorSpeed;
 
-            // === 4D + 3D Rotation matrices (ported from your code) ===
+            // Rotation matrices
             const rotationX = [
                 [1, 0, 0],
                 [0, Math.cos(angle), -Math.sin(angle)],
@@ -175,69 +164,95 @@
                 [0, Math.sin(-Math.PI / 2), Math.cos(-Math.PI / 2)]
             ];
 
-            // Project all 16 points from 4D → 2D
+            // === Step 1: Project all points (raw, unscaled) ===
+            const rawProjected = new Array(16);
             for (let i = 0; i < 16; i++) {
                 let rotated = matrixMultiply(rotation4dXY, points[i]);
                 rotated = matrixMultiply(rotation4dZW, rotated);
 
-                // 4D to 3D projection
                 const w = 1 / (DISTANCE - rotated[3][0]);
                 const projection4 = [[w, 0, 0, 0], [0, w, 0, 0], [0, 0, w, 0]];
                 let projected3D = matrixMultiply(projection4, rotated);
 
-                // Additional 3D rotation
                 let rotated2D = matrixMultiply(tesseractRotation, projected3D);
 
-                // 3D to 2D projection
                 const z = 1 / (DISTANCE - (rotated2D[2][0] + rotated[3][0]));
                 const projection2 = [[z, 0, 0], [0, z, 0]];
                 rotated2D = matrixMultiply(rotationX, projected3D);
                 const projected2D = matrixMultiply(projection2, rotated2D);
 
-                // Screen position
-                const x = Math.round(projected2D[0][0] * SCALE) + CENTER_X;
-                const y = Math.round(projected2D[1][0] * SCALE) + CENTER_Y;
+                // Store RAW (unscaled) coordinates
+                rawProjected[i] = [projected2D[0][0], projected2D[1][0]];
+            }
+
+            // === Step 2: Calculate bounding box of raw projection ===
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            for (let p of rawProjected) {
+                minX = Math.min(minX, p[0]);
+                maxX = Math.max(maxX, p[0]);
+                minY = Math.min(minY, p[1]);
+                maxY = Math.max(maxY, p[1]);
+            }
+
+            // === Step 3: Compute scale so the cube almost fills the screen ===
+            const targetWidth  = canvas.width  * (1 - MARGIN * 2);
+            const targetHeight = canvas.height * (1 - MARGIN * 2);
+
+            const currentWidth  = maxX - minX;
+            const currentHeight = maxY - minY;
+
+            const scaleX = targetWidth  / currentWidth;
+            const scaleY = targetHeight / currentHeight;
+            const fitScale = Math.min(scaleX, scaleY);
+
+            // === Step 4: Apply fitScale + centering ===
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+
+            for (let i = 0; i < 16; i++) {
+                const x = rawProjected[i][0] * fitScale + centerX;
+                const y = rawProjected[i][1] * fitScale + centerY;
                 projectedPoints[i] = [x, y];
             }
 
-            // === Draw all edges ===
-            const lineColor = getRainbow(0);      // Main rainbow
-            const dotColor  = getRainbow(1.2);    // Offset rainbow for dots
+            // === Drawing ===
+            const lineColor = getRainbow(0);
+            const dotColor  = getRainbow(1.2);
 
             ctx.lineWidth = LINE_WIDTH;
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
             ctx.strokeStyle = lineColor;
 
-            // Back cube (offset 8)
+            // Back cube
             for (let m = 0; m < 4; m++) {
                 drawLine(projectedPoints[m + 8], projectedPoints[((m + 1) % 4) + 8]);
                 drawLine(projectedPoints[m + 12], projectedPoints[((m + 1) % 4) + 12]);
                 drawLine(projectedPoints[m + 8], projectedPoints[m + 12]);
             }
 
-            // Front cube (offset 0)
+            // Front cube
             for (let m = 0; m < 4; m++) {
                 drawLine(projectedPoints[m], projectedPoints[(m + 1) % 4]);
                 drawLine(projectedPoints[m + 4], projectedPoints[(m + 1) % 4 + 4]);
                 drawLine(projectedPoints[m], projectedPoints[m + 4]);
             }
 
-            // Connecting edges between the two cubes
+            // Connecting edges
             for (let m = 0; m < 8; m++) {
                 drawLine(projectedPoints[m], projectedPoints[m + 8]);
             }
 
-            // === Draw vertices (dots) with offset rainbow ===
+            // Dots (much smaller now)
             ctx.fillStyle = dotColor;
             for (let i = 0; i < 16; i++) {
                 const [x, y] = projectedPoints[i];
                 ctx.beginPath();
-                ctx.arc(x, y, 18, 0, Math.PI * 2);
+                ctx.arc(x, y, DOT_RADIUS, 0, Math.PI * 2);
                 ctx.fill();
             }
 
-            // === Subtle opacity breathing effect ===
+            // Breathing opacity
             if (globalOpacity <= 25 || globalOpacity >= 100) {
                 opacityIncr *= -1;
             }
@@ -252,7 +267,7 @@
             ctx.stroke();
         }
 
-        // === Always-running animation system ===
+        // === Always-running animation ===
         let rafId = null;
         let intervalId = null;
 
@@ -261,28 +276,18 @@
         }
 
         function startAnimation() {
-            // Primary smooth loop
             function loop() {
                 drawFrame();
                 rafId = requestAnimationFrame(loop);
             }
             rafId = requestAnimationFrame(loop);
 
-            // When tab is hidden → switch to setInterval so it never pauses
             document.addEventListener('visibilitychange', () => {
                 if (document.hidden) {
-                    if (rafId) {
-                        cancelAnimationFrame(rafId);
-                        rafId = null;
-                    }
-                    if (!intervalId) {
-                        intervalId = setInterval(drawFrame, 1000 / 60);
-                    }
+                    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+                    if (!intervalId) intervalId = setInterval(drawFrame, 1000 / 60);
                 } else {
-                    if (intervalId) {
-                        clearInterval(intervalId);
-                        intervalId = null;
-                    }
+                    if (intervalId) { clearInterval(intervalId); intervalId = null; }
                     if (!rafId) {
                         rafId = requestAnimationFrame(function loop() {
                             drawFrame();
@@ -293,27 +298,19 @@
             });
         }
 
-        // === Keyboard Controls ===
+        // Keyboard controls
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'ArrowUp') {
-                speed += 0.005;
-            } else if (e.key === 'ArrowDown') {
-                speed = Math.max(0, speed - 0.005);
-            } else if (e.key === 'Escape') {
-                speed = 0;
-            } else if (e.key.toLowerCase() === 'p') {
-                speed += 5;           // Big temporary boost
-            } else if (e.key.toLowerCase() === 'r') {
-                speed = 0.01;
-                colorAngle = 0;
-            }
+            if (e.key === 'ArrowUp')      speed += 0.005;
+            else if (e.key === 'ArrowDown') speed = Math.max(0, speed - 0.005);
+            else if (e.key === 'Escape')    speed = 0;
+            else if (e.key.toLowerCase() === 'p') speed += 5;
+            else if (e.key.toLowerCase() === 'r') { speed = 0.01; colorAngle = 0; }
         });
 
-        // Boot everything
         startAnimation();
         drawFrame();
 
-        console.log('%c[4D Tesseract] 3840×2160 • Always running • Offset rainbow @ 0.01', 'color:#666');
+        console.log('%c[4D Tesseract] 3840×2160 • Auto-fit + tiny dots + always running', 'color:#666');
     </script>
 </body>
 </html>
