@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tesseract • 4D Hypercube</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            height: 100%;
+            background-color: #000000;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        .embed-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            width: 100%;
+            padding: 40px;
+            background-color: #000000;
+        }
+        
+        #canvas {
+            border: none;
+            border-radius: 16px;
+            box-shadow: 0 25px 80px rgba(0, 0, 0, 0.7),
+                        0 0 0 1px rgba(255, 255, 255, 0.06);
+            background-color: #000000;
+            max-width: 100%;
+            height: auto;
+            image-rendering: crisp-edges;
+        }
+        
+        .controls {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.6);
+            color: #aaa;
+            font-size: 13px;
+            padding: 8px 20px;
+            border-radius: 30px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.08);
+            white-space: nowrap;
+            z-index: 10;
+        }
+        
+        .controls span {
+            margin: 0 8px;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <div class="embed-container">
+        <canvas id="canvas" width="3840" height="2160"></canvas>
+    </div>
+    
+    <div class="controls">
+        ↑↓ Speed &nbsp;&nbsp; Esc = Pause &nbsp;&nbsp; P = Boost &nbsp;&nbsp; R = Reset &nbsp;&nbsp; Rainbow speed: 0.01 (offset)
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { alpha: true });
+
+        // === Configuration ===
+        const SCALE = 2000;
+        const CENTER_X = 3840 / 2;
+        const CENTER_Y = 2160 / 2;
+        const DISTANCE = 5;
+        
+        let angle = 0;
+        let speed = 0.01;
+        let colorAngle = 0;
+        const colorSpeed = 0.01;           // Fixed as requested
+        let globalOpacity = 100;
+        let opacityIncr = 1;
+        const LINE_WIDTH = 5;
+
+        // 16 points of the tesseract (4D) - same as your original code
+        const points = [
+            [[-1], [-1], [1], [1]],
+            [[1], [-1], [1], [1]],
+            [[1], [1], [1], [1]],
+            [[-1], [1], [1], [1]],
+            [[-1], [-1], [-1], [1]],
+            [[1], [-1], [-1], [1]],
+            [[1], [1], [-1], [1]],
+            [[-1], [1], [-1], [1]],
+            [[-1], [-1], [1], [-1]],
+            [[1], [-1], [1], [-1]],
+            [[1], [1], [1], [-1]],
+            [[-1], [1], [1], [-1]],
+            [[-1], [-1], [-1], [-1]],
+            [[1], [-1], [-1], [-1]],
+            [[1], [1], [-1], [-1]],
+            [[-1], [1], [-1], [-1]]
+        ];
+
+        let projectedPoints = new Array(16);
+
+        // Matrix multiplication (ported from your Python version)
+        function matrixMultiply(a, b) {
+            const rowsA = a.length;
+            const colsA = a[0].length;
+            const colsB = b[0].length;
+            
+            if (colsA !== b.length) return null;
+            
+            const result = Array.from({ length: rowsA }, () => Array(colsB).fill(0));
+            
+            for (let i = 0; i < rowsA; i++) {
+                for (let j = 0; j < colsB; j++) {
+                    let sum = 0;
+                    for (let k = 0; k < colsA; k++) {
+                        sum += a[i][k] * b[k][j];
+                    }
+                    result[i][j] = sum;
+                }
+            }
+            return result;
+        }
+
+        // Offset rainbow generator (lines use offset 0, dots use offset 1.2)
+        function getRainbow(offset = 0) {
+            const r = Math.floor((Math.sin(colorAngle + offset) * 127.5) + 127.5);
+            const g = Math.floor((Math.sin(colorAngle + offset + 2.0944) * 127.5) + 127.5);
+            const b = Math.floor((Math.sin(colorAngle + offset + 4.1888) * 127.5) + 127.5);
+            return `rgb(${r},${g},${b})`;
+        }
+
+        function drawTesseract() {
+            // Pure black background
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            angle += speed;
+            colorAngle += colorSpeed;
+
+            // === 4D + 3D Rotation matrices (ported from your code) ===
+            const rotationX = [
+                [1, 0, 0],
+                [0, Math.cos(angle), -Math.sin(angle)],
+                [0, Math.sin(angle), Math.cos(angle)]
+            ];
+
+            const rotation4dXY = [
+                [Math.cos(angle), -Math.sin(angle), 0, 0],
+                [Math.sin(angle), Math.cos(angle), 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1]
+            ];
+
+            const rotation4dZW = [
+                [1, 0, 0, 0],
+                [0, 1, 0, 0],
+                [0, 0, Math.cos(angle), -Math.sin(angle)],
+                [0, 0, Math.sin(angle), Math.cos(angle)]
+            ];
+
+            const tesseractRotation = [
+                [1, 0, 0],
+                [0, Math.cos(-Math.PI / 2), -Math.sin(-Math.PI / 2)],
+                [0, Math.sin(-Math.PI / 2), Math.cos(-Math.PI / 2)]
+            ];
+
+            // Project all 16 points from 4D → 2D
+            for (let i = 0; i < 16; i++) {
+                let rotated = matrixMultiply(rotation4dXY, points[i]);
+                rotated = matrixMultiply(rotation4dZW, rotated);
+
+                // 4D to 3D projection
+                const w = 1 / (DISTANCE - rotated[3][0]);
+                const projection4 = [[w, 0, 0, 0], [0, w, 0, 0], [0, 0, w, 0]];
+                let projected3D = matrixMultiply(projection4, rotated);
+
+                // Additional 3D rotation
+                let rotated2D = matrixMultiply(tesseractRotation, projected3D);
+
+                // 3D to 2D projection
+                const z = 1 / (DISTANCE - (rotated2D[2][0] + rotated[3][0]));
+                const projection2 = [[z, 0, 0], [0, z, 0]];
+                rotated2D = matrixMultiply(rotationX, projected3D);
+                const projected2D = matrixMultiply(projection2, rotated2D);
+
+                // Screen position
+                const x = Math.round(projected2D[0][0] * SCALE) + CENTER_X;
+                const y = Math.round(projected2D[1][0] * SCALE) + CENTER_Y;
+                projectedPoints[i] = [x, y];
+            }
+
+            // === Draw all edges ===
+            const lineColor = getRainbow(0);      // Main rainbow
+            const dotColor  = getRainbow(1.2);    // Offset rainbow for dots
+
+            ctx.lineWidth = LINE_WIDTH;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = lineColor;
+
+            // Back cube (offset 8)
+            for (let m = 0; m < 4; m++) {
+                drawLine(projectedPoints[m + 8], projectedPoints[((m + 1) % 4) + 8]);
+                drawLine(projectedPoints[m + 12], projectedPoints[((m + 1) % 4) + 12]);
+                drawLine(projectedPoints[m + 8], projectedPoints[m + 12]);
+            }
+
+            // Front cube (offset 0)
+            for (let m = 0; m < 4; m++) {
+                drawLine(projectedPoints[m], projectedPoints[(m + 1) % 4]);
+                drawLine(projectedPoints[m + 4], projectedPoints[(m + 1) % 4 + 4]);
+                drawLine(projectedPoints[m], projectedPoints[m + 4]);
+            }
+
+            // Connecting edges between the two cubes
+            for (let m = 0; m < 8; m++) {
+                drawLine(projectedPoints[m], projectedPoints[m + 8]);
+            }
+
+            // === Draw vertices (dots) with offset rainbow ===
+            ctx.fillStyle = dotColor;
+            for (let i = 0; i < 16; i++) {
+                const [x, y] = projectedPoints[i];
+                ctx.beginPath();
+                ctx.arc(x, y, 18, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // === Subtle opacity breathing effect ===
+            if (globalOpacity <= 25 || globalOpacity >= 100) {
+                opacityIncr *= -1;
+            }
+            globalOpacity += opacityIncr * 0.6;
+            ctx.globalAlpha = globalOpacity / 100;
+        }
+
+        function drawLine(p1, p2) {
+            ctx.beginPath();
+            ctx.moveTo(p1[0], p1[1]);
+            ctx.lineTo(p2[0], p2[1]);
+            ctx.stroke();
+        }
+
+        // === Always-running animation system ===
+        let rafId = null;
+        let intervalId = null;
+
+        function drawFrame() {
+            drawTesseract();
+        }
+
+        function startAnimation() {
+            // Primary smooth loop
+            function loop() {
+                drawFrame();
+                rafId = requestAnimationFrame(loop);
+            }
+            rafId = requestAnimationFrame(loop);
+
+            // When tab is hidden → switch to setInterval so it never pauses
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    if (rafId) {
+                        cancelAnimationFrame(rafId);
+                        rafId = null;
+                    }
+                    if (!intervalId) {
+                        intervalId = setInterval(drawFrame, 1000 / 60);
+                    }
+                } else {
+                    if (intervalId) {
+                        clearInterval(intervalId);
+                        intervalId = null;
+                    }
+                    if (!rafId) {
+                        rafId = requestAnimationFrame(function loop() {
+                            drawFrame();
+                            rafId = requestAnimationFrame(loop);
+                        });
+                    }
+                }
+            });
+        }
+
+        // === Keyboard Controls ===
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp') {
+                speed += 0.005;
+            } else if (e.key === 'ArrowDown') {
+                speed = Math.max(0, speed - 0.005);
+            } else if (e.key === 'Escape') {
+                speed = 0;
+            } else if (e.key.toLowerCase() === 'p') {
+                speed += 5;           // Big temporary boost
+            } else if (e.key.toLowerCase() === 'r') {
+                speed = 0.01;
+                colorAngle = 0;
+            }
+        });
+
+        // Boot everything
+        startAnimation();
+        drawFrame();
+
+        console.log('%c[4D Tesseract] 3840×2160 • Always running • Offset rainbow @ 0.01', 'color:#666');
+    </script>
+</body>
+</html>
