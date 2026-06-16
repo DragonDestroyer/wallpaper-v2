@@ -301,19 +301,89 @@
             });
         }
 
-        // Keyboard controls
+        // === UI Toggle (H key) ===
+        const controlsBar = document.querySelector('.controls');
+        
         document.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+
+            // Existing controls
             if (e.key === 'ArrowUp')      speed += 0.005;
             else if (e.key === 'ArrowDown') speed = Math.max(0, speed - 0.005);
             else if (e.key === 'Escape')    speed = 0;
-            else if (e.key.toLowerCase() === 'p') speed += 5;
-            else if (e.key.toLowerCase() === 'r') { speed = 0.01; colorAngle = 0; }
+            else if (key === 'p')           speed += 5;
+            else if (key === 'r') { speed = 0.01; colorAngle = 0; }
+
+            // H = Hide/Show UI
+            else if (key === 'h') {
+                if (controlsBar.style.display === 'none') {
+                    controlsBar.style.display = 'block';
+                } else {
+                    controlsBar.style.display = 'none';
+                }
+            }
+
+            // G = Record full loop and save video
+            else if (key === 'g' && !isRecording) {
+                startRecording();
+            }
         });
+
+        // === Recording (G key) ===
+        let isRecording = false;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+
+        function startRecording() {
+            isRecording = true;
+            recordedChunks = [];
+
+            // Hide UI while recording for clean capture
+            controlsBar.style.display = 'none';
+
+            const stream = canvas.captureStream(60); // 60 fps
+            mediaRecorder = new MediaRecorder(stream, {
+                mimeType: 'video/webm;codecs=vp9'
+            });
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                
+                // Auto download
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'tesseract-4k-loop.webm';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                isRecording = false;
+                // Show UI again after recording
+                controlsBar.style.display = 'block';
+            };
+
+            mediaRecorder.start();
+
+            // Record for 8 seconds (nice smooth loop length)
+            setTimeout(() => {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                }
+            }, 8000);
+        }
 
         startAnimation();
         drawFrame();
 
-        console.log('%c[4D Tesseract] 3840×2160 • Auto-fit + tiny dots + always running', 'color:#666');
+        console.log('%c[4D Tesseract] 3840×2160 • Press H to hide UI • Press G to record 8s loop as video', 'color:#666');
     </script>
 </body>
 </html>
