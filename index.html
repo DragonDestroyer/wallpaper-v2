@@ -79,8 +79,8 @@
         const colorSpeed = 0.01;
         let globalOpacity = 100;
         let opacityIncr = 1;
-        const LINE_WIDTH = 25;          // Slightly thicker lines
-        const DOT_RADIUS = 15;          // Doubled from previous size (4 → 8)
+        const LINE_WIDTH = 7;          // Slightly thicker lines
+        const DOT_RADIUS = 8;          // Doubled from previous size (4 → 8)
 
         // 16 points of the tesseract (4D)
         const points = [
@@ -131,6 +131,7 @@
         }
 
         function drawTesseract() {
+            ctx.globalAlpha = 1;                    // ← Important: reset alpha every frame
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -284,16 +285,18 @@
 
             document.addEventListener('visibilitychange', () => {
                 if (document.hidden) {
+                    // Switch to setInterval so it keeps running in background
                     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-                    if (!intervalId) intervalId = setInterval(drawFrame, 1000 / 60);
+                    if (intervalId) clearInterval(intervalId);
+                    intervalId = setInterval(drawFrame, 1000 / 60);
                 } else {
+                    // Switch back to smooth requestAnimationFrame
                     if (intervalId) { clearInterval(intervalId); intervalId = null; }
-                    if (!rafId) {
-                        rafId = requestAnimationFrame(function loop() {
-                            drawFrame();
-                            rafId = requestAnimationFrame(loop);
-                        });
-                    }
+                    if (rafId) cancelAnimationFrame(rafId);
+                    rafId = requestAnimationFrame(function loop() {
+                        drawFrame();
+                        rafId = requestAnimationFrame(loop);
+                    });
                 }
             });
         }
